@@ -121,7 +121,7 @@ observeEvent(input$reset, {
    return(list(
             src = values3$df_data3
           ))
-       }, deleteFile = TRUE)
+       }, deleteFile = FALSE)
  
  output$query_svg  <- renderImage({
    if (is.null(values4$df_data4)) return()
@@ -129,7 +129,7 @@ observeEvent(input$reset, {
    return(list(
             src = values4$df_data4
           ))
-       }, deleteFile = TRUE)
+       }, deleteFile = FALSE)
 
 output$tbl = DT::renderDT({
   if (is.null(values$df_data)) return()
