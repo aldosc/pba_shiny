@@ -1,0 +1,174 @@
+---
+title: "Identifying the polypharcology profile of a compound using ChEMBL Bioactivities"
+output: 
+  html_document:
+    includes:
+      in_header: cssloaders_in_header.html
+    theme: united
+    highlight: tango
+runtime: shiny
+---
+For comments, suggestions and errors, plese contact me at: asegura@ebi.ac.uk
+```{r setup, include=FALSE}
+library(jsonlite)
+library(urltools)
+library(reticulate)
+library(DT)
+library(knitr)
+library(networkD3)
+library(clusterProfiler)
+library(ReactomePA)
+library(org.Hs.eg.db)
+library(visNetwork)
+library(tidyverse)
+library(heatmaply)
+library(XML)
+library(shinycssloaders)
+library(cluster)
+library(shiny)
+source_python("make_matrix.py")
+source_python("sub_struc.py")
+source_python("query_struc.py")
+```
+# Similarity search using ChEMBL webservices
+```{r, echo=FALSE}
+fluidRow(
+    column(4,
+  textInput("my_mol", "Please provide a molecule in SMILES format", "N#Cc1ccccc1Cn3c(N2CCCCC2)cc(=O)[nH]c3=O", width = "600px"),
+  verbatimTextOutput("smiles"),
+  actionButton("go", "Run"),
+  actionButton("reset", "Reset")
+    ),
+      column(3,
+      sliderInput("sim_t", label = "Similarity threshold:", min = 70, max = 100, value = 85, step = 5)
+    )
+  )
+```
+
+# This is your query
+
+```{r, echo=FALSE}
+imageOutput('query_svg') %>% shinycssloaders::withSpinner(type=1)
+```
+
+
+```{r, context="server"}
+
+
+  output$smiles <- renderPrint({
+    input$my_mol
+  })
+  
+baseur_sim <- "https://www.ebi.ac.uk/chembl/api/data/similarity/"
+
+
+
+values <- reactiveValues(df_data = NULL)
+values2 <- reactiveValues(df_data2 = NULL)
+values3 <- reactiveValues(df_data3 = NULL)
+values4 <- reactiveValues(df_data4 = NULL)
+
+url_compound <- "https://www.ebi.ac.uk/chembl/beta/compound_report_card/"
+
+    observeEvent(input$go,{
+      simil_cut_off = paste0("/", as.character(input$sim_t))
+      my_compound <- as.character(input$my_mol)
+      
+      pba <- fromJSON(paste0(baseur_sim, url_encode(my_compound), simil_cut_off, ".json?limit=50"), flatten=TRUE)
+      if (pba$page_meta$total_count == 0)
+      return(NULL)
+      table_comp_match <- select(pba$molecules, molecule_chembl_id, similarity, molecule_properties.num_ro5_violations, withdrawn_flag, pref_name, molecule_structures.canonical_smiles)
+      colnames(table_comp_match) <- c("ChEMBL_ID","similarity",
+                                "Ro5_violations","withdrawn_info","name","canonical_smiles")
+
+table_comp_match$name <- ifelse(is.na(table_comp_match$name), table_comp_match$ChEMBL_ID, table_comp_match$name)
+table_out_pba <- mutate(table_comp_match, ChEMBL_ID = paste0("<a href='",url_compound,ChEMBL_ID,"' target='_blank'>",ChEMBL_ID,"</a>"))
+values$df_data <- table_out_pba
+            
+
+#####Generating a similarity matrix using Rdkit
+
+
+values2$df_data2 <- make_matrix(table_comp_match, my_compound)
+
+out_subst <- make_subst(table_comp_match, my_compound)
+query_str <- moltosvg(as.character(input$my_mol))
+
+xData <- xmlParse(out_subst)
+xquery <- xmlParse(query_str)
+
+saveXML(xData, file = "substr.svg")
+saveXML(xquery, file = "query.svg")
+
+values3$df_data3 <- "substr.svg"
+values4$df_data4 <- "query.svg"
+
+    })
+
+observeEvent(input$reset, {
+    values$df_data <- NULL
+    values2$df_data2 <- NULL
+    values3$df_data3 <- NULL
+    values4$df_data4 <- NULL
+  })
+
+
+ output$plot_as_svg  <- renderImage({
+   if (is.null(values3$df_data3)) return(list(
+        src = "images/molecule2.png",
+        contentType = "image/png"
+  ))
+          
+   return(list(
+            src = values3$df_data3
+          ))
+       }, deleteFile = F)
+ 
+ output$query_svg  <- renderImage({
+ Sys.sleep(2)
+   if (is.null(values4$df_data4)) return(list(
+        src = "images/molecule2_out_pba.png",
+        contentType = "image/png"
+  ))
+          
+   return(list(
+            src = values4$df_data4
+          ))
+       }, deleteFile = F)
+
+output$tbl = DT::renderDT({
+  if (is.null(values$df_data)) return()
+  DT::datatable(values$df_data, escape = F, rownames = F, caption = "Similarity search results")
+  })
+
+
+output$heatmap = renderPlotly({
+  if (is.null(values2$df_data2)) return()
+  heatmaply(as.matrix(values2$df_data2), margins = c(40, 40, 0, 0),
+          colors = BrBG, dist_method = "manhattan", hclust_method = "ward.D2"
+          )
+  
+  })
+
+```
+
+
+# Similarity search results
+```{r}
+DTOutput('tbl', width = 500)
+
+```
+# These compunds are similar to my query, but what is the relationship between them?                                                            
+### Let's perform a clustering analysis based on the similarity all vs all
+```{r}
+plotlyOutput('heatmap', width = "900px", height = "900px")
+```
+
+# Are the compounds sharing a common sub-structure?
+
+```{r}
+imageOutput('plot_as_svg')
+```
+
+
+
